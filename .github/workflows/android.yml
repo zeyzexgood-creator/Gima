@@ -14,10 +14,13 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: set up JDK 21
+      with:
+        fetch-depth: 0  # Ambil semua history untuk git hash
+    
+    - name: set up JDK 17
       uses: actions/setup-java@v4
       with:
-        java-version: '21'
+        java-version: '17'  # Ganti ke 17 untuk kompatibilitas
         distribution: 'temurin'
         cache: gradle
 
@@ -27,80 +30,82 @@ jobs:
     - name: Clean build
       run: ./gradlew clean
       
-    - name: Build with Gradle (Default Release)
+    - name: Build Default Release APK
       run: ./gradlew :app:assembleDefaultRelease
       
-    - name: Build with Gradle (Termux Release)
+    - name: Build Termux Release APK
       run: ./gradlew :app:assembleTermuxRelease
     
-    # 获取版本 dari file gradle
-    - name: Get version info
+    - name: List output files
+      run: |
+        echo "=== Default Release ==="
+        ls -la app/build/outputs/apk/default/release/ || echo "No files found"
+        echo "=== Termux Release ==="
+        ls -la app/build/outputs/apk/termux/release/ || echo "No files found"
+    
+    - name: Get version info from build.gradle.kts
       id: get_version_info
       run: |
         cd app
+        # Ambil versionName dari gradle
         VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' build.gradle.kts | head -1)
         VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K\d+' build.gradle.kts | head -1)
         echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
         echo "VERSION_CODE=${VERSION_CODE}" >> $GITHUB_ENV
-        RELEASE_NAME="v${VERSION_NAME}-${VERSION_CODE}"
-        echo "RELEASE_NAME=${RELEASE_NAME}" >> $GITHUB_ENV
+        echo "Found version: ${VERSION_NAME} (${VERSION_CODE})"
+    
+    - name: Set asset names
+      id: set_names
+      run: |
         ASSET_NAME_DEFAULT="AIDE-Plus_${VERSION_NAME}.apk"
         ASSET_NAME_TERMUX="AIDE-Plus_Termux_${VERSION_NAME}.apk"
         echo "ASSET_NAME_DEFAULT=${ASSET_NAME_DEFAULT}" >> $GITHUB_ENV
         echo "ASSET_NAME_TERMUX=${ASSET_NAME_TERMUX}" >> $GITHUB_ENV
-
-    # 重命名 APK - Default Flavor
+        echo "Default APK: ${ASSET_NAME_DEFAULT}"
+        echo "Termux APK: ${ASSET_NAME_TERMUX}"
+    
     - name: Rename Default APK
       run: |
         if [ -f "app/build/outputs/apk/default/release/app-default-release.apk" ]; then
           mv app/build/outputs/apk/default/release/app-default-release.apk app/build/outputs/apk/default/release/${{ env.ASSET_NAME_DEFAULT }}
-          echo "Default APK found and renamed"
+          echo "✅ Default APK renamed"
         else
-          echo "Default APK not found"
-          ls -la app/build/outputs/apk/default/release/ || true
+          echo "❌ Default APK not found - build failed!"
+          exit 1
         fi
         
-    # 重命名 APK - Termux Flavor
     - name: Rename Termux APK
       run: |
         if [ -f "app/build/outputs/apk/termux/release/app-termux-release.apk" ]; then
           mv app/build/outputs/apk/termux/release/app-termux-release.apk app/build/outputs/apk/termux/release/${{ env.ASSET_NAME_TERMUX }}
-          echo "Termux APK found and renamed"
+          echo "✅ Termux APK renamed"
         else
-          echo "Termux APK not found"
-          ls -la app/build/outputs/apk/termux/release/ || true
+          echo "⚠️ Termux APK not found - skipping"
         fi
         
-    # Upload Default APK
     - name: Upload Default APK
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.ASSET_NAME_DEFAULT }}
         path: app/build/outputs/apk/default/release/${{ env.ASSET_NAME_DEFAULT }}
+        if-no-files-found: error
         
-    # Upload Termux APK
     - name: Upload Termux APK
       uses: actions/upload-artifact@v4
+      if: success()
       with:
         name: ${{ env.ASSET_NAME_TERMUX }}
         path: app/build/outputs/apk/termux/release/${{ env.ASSET_NAME_TERMUX }}
+        if-no-files-found: warn
         
-    # 发布 ke GitHub Release (Default)
-    - name: Upload Default APK to GitHub Release
+    - name: Upload to GitHub Release
       uses: softprops/action-gh-release@v2
       if: startsWith(github.ref, 'refs/tags/')
       with:
         tag_name: ${{ github.ref_name }}
-        name: ${{ env.RELEASE_NAME }}
-        files: app/build/outputs/apk/default/release/${{ env.ASSET_NAME_DEFAULT }}
+        name: ${{ env.VERSION_NAME }}
+        files: |
+          app/build/outputs/apk/default/release/${{ env.ASSET_NAME_DEFAULT }}
+          app/build/outputs/apk/termux/release/${{ env.ASSET_NAME_TERMUX }}
         token: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
-        
-    # 发布 ke GitHub Release (Termux)
-    - name: Upload Termux APK to GitHub Release
-      uses: softprops/action-gh-release@v2
-      if: startsWith(github.ref, 'refs/tags/')
-      with:
-        tag_name: ${{ github.ref_name }}
-        name: ${{ env.RELEASE_NAME }}
-        files: app/build/outputs/apk/termux/release/${{ env.ASSET_NAME_TERMUX }}
-        token: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+        fail_on_unmatched_files: false
