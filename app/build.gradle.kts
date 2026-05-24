@@ -63,7 +63,7 @@ android {
         buildConfigField("String", "GIT_HASH", "\"${gitCommitHash}\"")
 
 
-        //multiDexEnabled = true
+        multiDexEnabled = true
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
