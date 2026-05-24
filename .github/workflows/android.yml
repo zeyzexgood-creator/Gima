@@ -1,11 +1,6 @@
-name: Build & Publish Release APK
+name: Debug Build
 
 on:
-  push:
-    tags:
-      - v*
-  pull_request:
-    branches: [ "master" ]
   workflow_dispatch: { }
 
 jobs:
@@ -14,98 +9,55 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # Ambil semua history untuk git hash
     
-    - name: set up JDK 21
+    - name: Set up JDK 21
       uses: actions/setup-java@v4
       with:
-        java-version: '21'  # Ganti ke 17 untuk kompatibilitas
+        java-version: '21'
         distribution: 'temurin'
         cache: gradle
 
-    - name: Grant execute permission for gradlew
+    - name: Grant execute permission
       run: chmod +x gradlew
       
     - name: Clean build
       run: ./gradlew clean
       
-    - name: Build Default Release APK
-      run: ./gradlew :app:assembleDefaultRelease
+    - name: Build with stacktrace (lihat error detail)
+      run: ./gradlew :app:assembleDefaultRelease --stacktrace
       
-    - name: Build Termux Release APK
-      run: ./gradlew :app:assembleTermuxRelease
-    
     - name: List output files
+      if: always()
       run: |
-        echo "=== Default Release ==="
-        ls -la app/build/outputs/apk/default/release/ || echo "No files found"
-        echo "=== Termux Release ==="
-        ls -la app/build/outputs/apk/termux/release/ || echo "No files found"
-    
-    - name: Get version info from build.gradle.kts
-      id: get_version_info
-      run: |
-        cd app
-        # Ambil versionName dari gradle
-        VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' build.gradle.kts | head -1)
-        VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K\d+' build.gradle.kts | head -1)
-        echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
-        echo "VERSION_CODE=${VERSION_CODE}" >> $GITHUB_ENV
-        echo "Found version: ${VERSION_NAME} (${VERSION_CODE})"
-    
-    - name: Set asset names
-      id: set_names
-      run: |
-        ASSET_NAME_DEFAULT="AIDE-Plus_${VERSION_NAME}.apk"
-        ASSET_NAME_TERMUX="AIDE-Plus_Termux_${VERSION_NAME}.apk"
-        echo "ASSET_NAME_DEFAULT=${ASSET_NAME_DEFAULT}" >> $GITHUB_ENV
-        echo "ASSET_NAME_TERMUX=${ASSET_NAME_TERMUX}" >> $GITHUB_ENV
-        echo "Default APK: ${ASSET_NAME_DEFAULT}"
-        echo "Termux APK: ${ASSET_NAME_TERMUX}"
-    
-    - name: Rename Default APK
-      run: |
-        if [ -f "app/build/outputs/apk/default/release/app-default-release.apk" ]; then
-          mv app/build/outputs/apk/default/release/app-default-release.apk app/build/outputs/apk/default/release/${{ env.ASSET_NAME_DEFAULT }}
-          echo "✅ Default APK renamed"
-        else
-          echo "❌ Default APK not found - build failed!"
-          exit 1
-        fi
+        echo "=== Build outputs ==="
+        find app/build -name "*.apk" 2>/dev/null || echo "No APK found"
+        echo "=== Directory structure ==="
+        ls -la app/build/outputs/apk/ 2>/dev/null || echo "No apk directory"
         
-    - name: Rename Termux APK
-      run: |
-        if [ -f "app/build/outputs/apk/termux/release/app-termux-release.apk" ]; then
-          mv app/build/outputs/apk/termux/release/app-termux-release.apk app/build/outputs/apk/termux/release/${{ env.ASSET_NAME_TERMUX }}
-          echo "✅ Termux APK renamed"
-        else
-          echo "⚠️ Termux APK not found - skipping"
-        fi
-        
-    - name: Upload Default APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ env.ASSET_NAME_DEFAULT }}
-        path: app/build/outputs/apk/default/release/${{ env.ASSET_NAME_DEFAULT }}
-        if-no-files-found: error
-        
-    - name: Upload Termux APK
-      uses: actions/upload-artifact@v4
+    - name: Upload APK - Default Release
       if: success()
+      uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.ASSET_NAME_TERMUX }}
-        path: app/build/outputs/apk/termux/release/${{ env.ASSET_NAME_TERMUX }}
+        name: AIDE-Plus-Default-Release.apk
+        path: |
+          app/build/outputs/apk/default/release/*.apk
+          app/build/outputs/apk/*/release/*.apk
+          app/build/outputs/apk/**/*.apk
         if-no-files-found: warn
         
-    - name: Upload to GitHub Release
-      uses: softprops/action-gh-release@v2
-      if: startsWith(github.ref, 'refs/tags/')
+    - name: Upload APK - Termux Release
+      if: success()
+      uses: actions/upload-artifact@v4
       with:
-        tag_name: ${{ github.ref_name }}
-        name: ${{ env.VERSION_NAME }}
-        files: |
-          app/build/outputs/apk/default/release/${{ env.ASSET_NAME_DEFAULT }}
-          app/build/outputs/apk/termux/release/${{ env.ASSET_NAME_TERMUX }}
-        token: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
-        fail_on_unmatched_files: false
+        name: AIDE-Plus-Termux-Release.apk
+        path: |
+          app/build/outputs/apk/termux/release/*.apk
+        if-no-files-found: warn
+        
+    - name: Upload all APKs (fallback)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: All-APKs
+        path: app/build/outputs/apk/**/*.apk
+        if-no-files-found: warn
