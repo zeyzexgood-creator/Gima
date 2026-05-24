@@ -8,8 +8,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
     - name: Set up JDK 21
       uses: actions/setup-java@v4
       with:
@@ -17,23 +20,51 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Grant execute permission
+    - name: Grant execute permission for gradlew
       run: chmod +x gradlew
-      
+
     - name: Clean build
       run: ./gradlew clean
-      
+
     - name: Build with stacktrace (lihat error detail)
-      run: ./gradlew :app:assembleDefaultRelease --stacktrace
-      
-    - name: List output files
+      id: build
+      continue-on-error: true
+      run: |
+        ./gradlew :app:assembleDefaultRelease --stacktrace --info 2>&1 | tee build.log
+        echo "build_exit_code=${?}" >> $GITHUB_OUTPUT
+
+    - name: Build Termux Release
+      continue-on-error: true
+      run: |
+        ./gradlew :app:assembleTermuxRelease --stacktrace 2>&1 | tee -a build.log
+
+    - name: List all output files
       if: always()
       run: |
         echo "=== Build outputs ==="
-        find app/build -name "*.apk" 2>/dev/null || echo "No APK found"
-        echo "=== Directory structure ==="
-        ls -la app/build/outputs/apk/ 2>/dev/null || echo "No apk directory"
+        echo "Looking for APK files:"
+        find . -name "*.apk" 2>/dev/null || echo "No APK found anywhere"
         
+        echo ""
+        echo "=== Directory structure ==="
+        ls -la app/build/outputs/ 2>/dev/null || echo "No outputs directory"
+        
+        echo ""
+        echo "=== Full apk directory ==="
+        find app/build -type d -name "apk" 2>/dev/null || echo "No apk directory"
+        
+        echo ""
+        echo "=== All files in build/outputs ==="
+        find app/build/outputs -type f 2>/dev/null | head -50 || echo "No files"
+
+    - name: Upload build log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: build.log
+        if-no-files-found: warn
+
     - name: Upload APK - Default Release
       if: success()
       uses: actions/upload-artifact@v4
@@ -44,7 +75,7 @@ jobs:
           app/build/outputs/apk/*/release/*.apk
           app/build/outputs/apk/**/*.apk
         if-no-files-found: warn
-        
+
     - name: Upload APK - Termux Release
       if: success()
       uses: actions/upload-artifact@v4
@@ -52,12 +83,32 @@ jobs:
         name: AIDE-Plus-Termux-Release.apk
         path: |
           app/build/outputs/apk/termux/release/*.apk
+          app/build/outputs/apk/**/termux/**/*.apk
         if-no-files-found: warn
-        
+
     - name: Upload all APKs (fallback)
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: All-APKs
-        path: app/build/outputs/apk/**/*.apk
+        path: |
+          **/build/outputs/apk/**/*.apk
+          **/*.apk
         if-no-files-found: warn
+
+    - name: Show build result
+      if: always()
+      run: |
+        if [ -f "build.log" ]; then
+          echo "=== Last 100 lines of build log ==="
+          tail -100 build.log
+        fi
+        
+        echo ""
+        if find . -name "*.apk" | grep -q .; then
+          echo "✅ BUILD SUCCESSFUL - APK found!"
+          find . -name "*.apk" -exec ls -lh {} \;
+        else
+          echo "❌ BUILD FAILED - No APK generated"
+          exit 1
+        fi
